@@ -1,0 +1,9 @@
+# This file is required for applying the OCIRepository CRD from
+# the feature branch, which is removed in flux-instance.yaml.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - flux-instance.yaml
+  - flux-operator.yaml
+  # OCIRepository from feature PR
+  - https://raw.githubusercontent.com/fluxcd/source-controller/316edc33e867e3f084c65c1da7168ed409885d61/config/crd/bases/source.toolkit.fluxcd.io_ocirepositories.yaml

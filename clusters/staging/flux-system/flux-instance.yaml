@@ -1,0 +1,66 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: FluxInstance
+metadata:
+  name: flux
+  namespace: flux-system
+spec:
+  distribution:
+    version: 2.7.x
+    registry: ghcr.io/fluxcd
+    artifact: oci://ghcr.io/controlplaneio-fluxcd/flux-operator-manifests:latest
+  components:
+    - source-controller
+    - kustomize-controller
+    - helm-controller
+    - notification-controller
+    - source-watcher
+  cluster:
+    type: kubernetes
+    networkPolicy: true
+    domain: cluster.local
+    objectLevelWorkloadIdentity: true
+  sync:
+    kind: GitRepository
+    url: https://github.com/matheuscscp/flux-operator-zot-example.git
+    ref: refs/heads/main
+    path: clusters/staging
+  kustomize:
+    patches:
+      - target:
+          kind: Deployment
+          name: source-controller
+        patch: |
+          - op: add
+            path: /spec/template/spec/containers/0/image
+            value: ghcr.io/matheuscscp/fluxcd/source-controller:oci-sa-token-v123
+      - target:
+          kind: Deployment
+          name: kustomize-controller
+        patch: |
+          - op: add
+            path: /spec/template/spec/containers/0/args/-
+            value: --feature-gates=CancelHealthCheckOnNewRevision=true
+      - target:
+          kind: Deployment
+          name: (kustomize-controller|helm-controller|source-controller)
+        patch: |
+          - op: add
+            path: /spec/template/spec/containers/0/args/-
+            value: --requeue-dependency=5s
+      - target:
+          kind: Kustomization
+          name: flux-system
+        patch: |
+          - op: add
+            path: /spec/interval
+            value: 10s
+      # Delete OCIRepository CRD (importing back from feature PR, see kustomization.yaml)
+      - target:
+          kind: CustomResourceDefinition
+          name: ocirepositories.source.toolkit.fluxcd.io
+        patch: |-
+          apiVersion: apiextensions.k8s.io/v1
+          kind: CustomResourceDefinition
+          metadata:
+            name: ocirepositories.source.toolkit.fluxcd.io
+          $patch: delete

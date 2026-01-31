@@ -1,0 +1,20 @@
+# This is needed to allow anonymous users to access the ServiceAccount
+# issuer discovery endpoint, which is required for OIDC authentication
+# to work.
+#
+# Note: For production, this RBAC should not be needed as the OIDC
+# discovery documents should not be served directly by the Kubernetes
+# API server. Instead, they should be served somewhere else, see
+# comment in the staging.yaml file for more details.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: anonymous-service-account-issuer-discovery
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:service-account-issuer-discovery
+subjects:
+  - kind: User
+    name: system:anonymous
+    apiGroup: rbac.authorization.k8s.io

@@ -1,0 +1,87 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: push-artifacts
+  namespace: flux-system
+spec:
+  dependsOn:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: zot
+      namespace: zot
+      ready: true
+    - apiVersion: kustomize.toolkit.fluxcd.io/v1
+      kind: Kustomization
+      name: public-oidc-discovery
+      namespace: flux-system
+      ready: true
+  resources:
+    - apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: push-artifacts
+        namespace: flux-system
+    - apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: push-artifacts
+        namespace: flux-system
+      spec:
+        template:
+          spec:
+            serviceAccountName: push-artifacts
+            restartPolicy: OnFailure
+            volumes:
+              - name: registry-token
+                projected:
+                  sources:
+                    - serviceAccountToken:
+                        audience: zot
+                        expirationSeconds: 3600
+                        path: registry-token
+            containers:
+              - name: push-artifacts
+                image: alpine:latest
+                command: ["/bin/sh", "-c"]
+                volumeMounts:
+                  - name: registry-token
+                    mountPath: /var/run/secrets/tokens/registry-token
+                    subPath: registry-token
+                    readOnly: true
+                args:
+                  - |
+                    set -e
+
+                    # Install crane
+                    apk add --no-cache curl
+                    curl -sL https://github.com/google/go-containerregistry/releases/download/v0.20.2/go-containerregistry_Linux_x86_64.tar.gz | tar -xzf - -C /usr/local/bin crane
+                    chmod +x /usr/local/bin/crane
+
+                    REGISTRY="zot.zot.svc.cluster.local:5000"
+                    SOURCE="ghcr.io/controlplaneio-fluxcd/flux-operator-manifests:latest"
+                    DESTINATION="${REGISTRY}/frontend:latest"
+
+                    # Build Docker config with the projected ServiceAccount token
+                    TOKEN=$(cat /var/run/secrets/tokens/registry-token)
+                    mkdir -p ~/.docker
+                    printf '{"auths":{"%s":{"registryToken":"%s"}}}' "${REGISTRY}" "${TOKEN}" > ~/.docker/config.json
+
+                    # Only push if the destination does not already exist
+                    if crane manifest --insecure "${DESTINATION}" >/dev/null 2>&1; then
+                      echo "Destination ${DESTINATION} already exists, skipping."
+                    else
+                      echo "Copying ${SOURCE} to ${DESTINATION}..."
+                      crane copy --insecure "${SOURCE}" "${DESTINATION}"
+                      echo "Done."
+                    fi
+
+                    DESTINATION="${REGISTRY}/backend:latest"
+
+                    # Only push if the destination does not already exist
+                    if crane manifest --insecure "${DESTINATION}" >/dev/null 2>&1; then
+                      echo "Destination ${DESTINATION} already exists, skipping."
+                    else
+                      echo "Copying ${SOURCE} to ${DESTINATION}..."
+                      crane copy --insecure "${SOURCE}" "${DESTINATION}"
+                      echo "Done."
+                    fi

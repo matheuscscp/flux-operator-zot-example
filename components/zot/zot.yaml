@@ -1,0 +1,133 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: zot
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: zot
+  namespace: zot
+spec:
+  interval: 1h
+  url: http://zotregistry.dev/helm-charts
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: zot
+  namespace: zot
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: zot
+      version: 0.1.97
+      sourceRef:
+        kind: HelmRepository
+        name: zot
+  releaseName: zot
+  install:
+    strategy:
+      name: RetryOnFailure
+      retryInterval: 30s
+  upgrade:
+    strategy:
+      name: RetryOnFailure
+      retryInterval: 30s
+  values:
+  # The following configuration enables Zot to authenticate ServiceAccount tokens
+  # issued by the cluster. It also authorizes the `source-controller` ServiceAccount
+  # in the `frontend` namespace to perform all actions on the `frontend` repository.
+    mountConfig: true
+    configFiles:
+      config.json: |-
+        {
+          "distSpecVersion": "1.1.1",
+          "storage": {
+            "rootDirectory": "/tmp/zot"
+          },
+          "log": {
+            "level": "debug"
+          },
+          "http": {
+            "address": "0.0.0.0",
+            "port": "5000",
+            "auth": {
+              "bearer": {
+                "realm": "zot",
+                "service": "zot-registry",
+                "oidc": [
+                  {
+                    "issuer": "https://kubernetes.default.svc.cluster.local",
+                    "audiences": ["zot"],
+                    "claimMapping": {
+                      "username": "claims.sub"
+                    }
+                  }
+                ]
+              }
+            },
+            "accessControl": {
+              "repositories": {
+                "frontend": {
+                  "policies": [
+                    {
+                      "users": ["system:serviceaccount:flux-system:push-artifacts"],
+                      "actions": ["read", "create"]
+                    },
+                    {
+                      "users": ["system:serviceaccount:frontend:source-controller"],
+                      "actions": ["read"]
+                    }
+                  ],
+                  "defaultPolicy": []
+                },
+                "backend": {
+                  "policies": [
+                    {
+                      "users": ["system:serviceaccount:flux-system:push-artifacts"],
+                      "actions": ["read", "create"]
+                    },
+                    {
+                      "users": ["system:serviceaccount:backend:source-controller"],
+                      "actions": ["read"]
+                    }
+                  ],
+                  "defaultPolicy": []
+                }
+              }
+            }
+          }
+        }
+  # The following configuration adds the cluster's CA certificate to the Zot container's
+  # trusted certificates. This is necessary for Zot to trust the OIDC issuer of the cluster
+  # for ServiceAccount tokens.
+    extraVolumes:
+      - name: custom-ca
+        emptyDir: {}
+    extraVolumeMounts:
+      - name: custom-ca
+        mountPath: /etc/ssl/certs/ca-certificates.crt
+        subPath: ca-certificates.crt
+        readOnly: true
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: zot
+            patch: |
+              - op: add
+                path: /spec/template/spec/initContainers
+                value:
+                  - name: setup-cluster-ca
+                    image: alpine
+                    command: ["sh", "-c"]
+                    args:
+                      - |
+                        cp /etc/ssl/certs/ca-certificates.crt /custom-ca/ca-certificates.crt
+                        cat /var/run/secrets/kubernetes.io/serviceaccount/ca.crt >> /custom-ca/ca-certificates.crt
+                    volumeMounts:
+                      - name: custom-ca
+                        mountPath: /custom-ca

@@ -1,0 +1,56 @@
+apiVersion: fluxcd.controlplane.io/v1
+kind: ResourceSet
+metadata:
+  name: tenants
+  namespace: flux-system
+  annotations:
+    fluxcd.controlplane.io/reconcileEvery: 10s
+spec:
+  dependsOn:
+    - apiVersion: batch/v1
+      kind: Job
+      name: push-artifacts
+      namespace: flux-system
+      ready: true
+      readyExpr: status.succeeded == 1
+  inputs:
+    - tenant: frontend
+      oppositeTenant: backend
+    - tenant: backend
+      oppositeTenant: frontend
+  resources:
+    - apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: << inputs.tenant >>
+    - apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: source-controller
+        namespace: << inputs.tenant >>
+    - apiVersion: source.toolkit.fluxcd.io/v1
+      kind: OCIRepository
+      metadata:
+        name: << inputs.tenant >>
+        namespace: << inputs.tenant >>
+      spec:
+        interval: 1m
+        url: oci://zot.zot.svc.cluster.local:5000/<< inputs.tenant >>
+        credential: ServiceAccountToken
+        serviceAccountName: source-controller
+        audiences: [zot]
+    # The OCIRepository below shows the multi-tenancy aspect by referencing
+    # the opposite tenant's repository. The source-controller reports an error
+    # in the status because Zot is configured with tenant isolation, permissions
+    # are granted for a tenant only in their own repository.
+    - apiVersion: source.toolkit.fluxcd.io/v1
+      kind: OCIRepository
+      metadata:
+        name: << inputs.oppositeTenant >>
+        namespace: << inputs.tenant >>
+      spec:
+        interval: 1m
+        url: oci://zot.zot.svc.cluster.local:5000/<< inputs.oppositeTenant >>
+        credential: ServiceAccountToken
+        serviceAccountName: source-controller
+        audiences: [zot]
